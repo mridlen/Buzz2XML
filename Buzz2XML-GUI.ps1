@@ -209,8 +209,8 @@ $btnDecode.Add_Click({
         [System.Windows.Forms.MessageBox]::Show("Please specify an output XML file.", "Missing Output", "OK", "Warning")
         return
     }
-    $args = "-Mode decode -InputFile `"$($txtDecIn.Text)`" -OutputFile `"$($txtDecOut.Text)`""
-    Invoke-CliCommand -Arguments $args -OutputBox $txtDecLog
+    $cliArgs = "-Mode decode -InputFile `"$($txtDecIn.Text)`" -OutputFile `"$($txtDecOut.Text)`""
+    Invoke-CliCommand -Arguments $cliArgs -OutputBox $txtDecLog
 })
 
 # ============================================================================
@@ -301,8 +301,8 @@ $btnEncode.Add_Click({
         [System.Windows.Forms.MessageBox]::Show("Please specify an output BMX file.", "Missing Output", "OK", "Warning")
         return
     }
-    $args = "-Mode encode -InputFile `"$($txtEncIn.Text)`" -OutputFile `"$($txtEncOut.Text)`""
-    Invoke-CliCommand -Arguments $args -OutputBox $txtEncLog
+    $cliArgs = "-Mode encode -InputFile `"$($txtEncIn.Text)`" -OutputFile `"$($txtEncOut.Text)`""
+    Invoke-CliCommand -Arguments $cliArgs -OutputBox $txtEncLog
 })
 
 # ============================================================================
@@ -355,8 +355,8 @@ $btnListPaths.Add_Click({
         [System.Windows.Forms.MessageBox]::Show("Please select an input BMX file.", "Missing Input", "OK", "Warning")
         return
     }
-    $args = "-Mode remap -InputFile `"$($txtRemIn.Text)`" -ListPaths"
-    Invoke-CliCommand -Arguments $args -OutputBox $txtRemLog
+    $cliArgs = "-Mode remap -InputFile `"$($txtRemIn.Text)`" -ListPaths"
+    Invoke-CliCommand -Arguments $cliArgs -OutputBox $txtRemLog
 })
 $tabRemap.Controls.Add($btnListPaths)
 
@@ -446,8 +446,8 @@ $btnRemap.Add_Click({
         [System.Windows.Forms.MessageBox]::Show("Please enter the new path prefix to replace with.", "Missing Remap To", "OK", "Warning")
         return
     }
-    $args = "-Mode remap -InputFile `"$($txtRemIn.Text)`" -OutputFile `"$($txtRemOut.Text)`" -RemapFrom `"$($txtRemFrom.Text)`" -RemapTo `"$($txtRemTo.Text)`""
-    Invoke-CliCommand -Arguments $args -OutputBox $txtRemLog
+    $cliArgs = "-Mode remap -InputFile `"$($txtRemIn.Text)`" -OutputFile `"$($txtRemOut.Text)`" -RemapFrom `"$($txtRemFrom.Text)`" -RemapTo `"$($txtRemTo.Text)`""
+    Invoke-CliCommand -Arguments $cliArgs -OutputBox $txtRemLog
 })
 
 # ============================================================================
