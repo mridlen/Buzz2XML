@@ -1,0 +1,10 @@
+# Ignore everything
+*
+
+# Allow the main scripts
+!Buzz2XML.ps1
+!Buzz2XML-GUI.ps1
+
+# Allow git and project files
+!.gitignore
+!README.md
