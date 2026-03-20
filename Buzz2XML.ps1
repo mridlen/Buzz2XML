@@ -384,7 +384,7 @@ function ConvertFrom-Buzz {
             "BVER" { Parse-BVER $bytes $sec.Offset $sec.Size $xml $root }       # BVER parsing (Parse-BVER)
             "PARA" { Parse-PARA $bytes $sec.Offset $sec.Size $xml $root | Out-Null }
             "MACH" { Parse-MACH $bytes $sec.Offset $sec.Size $xml $root $paraInfo }  # MACH parsing (Parse-MACH)
-            "CONN" { Parse-CONN $bytes $sec.Offset $sec.Size $xml $root }       # CONN parsing (Parse-CONN)
+            "CONN" { Parse-CONN $bytes $sec.Offset $sec.Size $xml $root $paraInfo }  # CONN parsing (Parse-CONN)
             "CONX" { Parse-CONX $bytes $sec.Offset $sec.Size $xml $root }       # CONX parsing (Parse-CONX)
             "MACX" { Parse-MACX $bytes $sec.Offset $sec.Size $xml $root }       # MACX parsing (Parse-MACX)
             "WAVT" { Parse-WAVT $bytes $sec.Offset $sec.Size $xml $root }       # WAVT parsing (Parse-WAVT)
@@ -392,7 +392,7 @@ function ConvertFrom-Buzz {
             "PATT" { Parse-PATT $bytes $sec.Offset $sec.Size $xml $root $paraInfo $machineInputCounts }  # PATT parsing (Parse-PATT)
             "PAT2" { Parse-GenericSection $bytes $sec.Offset $sec.Size $xml $root "PAT2" }  # PAT2 (raw)
             "PATX" { Parse-GenericSection $bytes $sec.Offset $sec.Size $xml $root "PATX" }  # PATX (raw)
-            "SEQU" { Parse-SEQU $bytes $sec.Offset $sec.Size $xml $root }       # SEQU parsing (Parse-SEQU)
+            "SEQU" { Parse-SEQU $bytes $sec.Offset $sec.Size $xml $root $paraInfo }  # SEQU parsing (Parse-SEQU)
             "BLAH" { Parse-BLAH $bytes $sec.Offset $sec.Size $xml $root }       # BLAH parsing (Parse-BLAH)
             "PDLG" { Parse-PDLG $bytes $sec.Offset $sec.Size $xml $root }       # PDLG parsing (Parse-PDLG)
             "MIDI" { Parse-MIDI $bytes $sec.Offset $sec.Size $xml $root }       # MIDI parsing (Parse-MIDI)
@@ -600,7 +600,7 @@ function Parse-MACH {
 
 # --- CONN ---
 function Parse-CONN {
-    param([byte[]]$Bytes, [uint32]$Offset, [uint32]$Size, [System.Xml.XmlDocument]$Xml, [System.Xml.XmlElement]$Parent)
+    param([byte[]]$Bytes, [uint32]$Offset, [uint32]$Size, [System.Xml.XmlDocument]$Xml, [System.Xml.XmlElement]$Parent, [array]$ParaInfo)
     $pos = [int]$Offset
     $posRef = [ref]$pos
 
@@ -613,8 +613,10 @@ function Parse-CONN {
     for ($i = 0; $i -lt $numConn; $i++) {
         $cEl = $Xml.CreateElement("Connection")
         $connEl.AppendChild($cEl) | Out-Null
-        $cEl.SetAttribute("source", (Read-Word $Bytes $posRef))
-        $cEl.SetAttribute("destination", (Read-Word $Bytes $posRef))
+        $srcIdx = Read-Word $Bytes $posRef
+        $dstIdx = Read-Word $Bytes $posRef
+        $cEl.SetAttribute("source", (Sanitize-XmlString $ParaInfo[$srcIdx].Name))
+        $cEl.SetAttribute("destination", (Sanitize-XmlString $ParaInfo[$dstIdx].Name))
         $cEl.SetAttribute("amp", (Read-Word $Bytes $posRef))
         $cEl.SetAttribute("pan", (Read-Word $Bytes $posRef))
     }
@@ -803,7 +805,7 @@ function Parse-PATT {
 
         $machPattEl = $Xml.CreateElement("MachinePatterns")
         $pattEl.AppendChild($machPattEl) | Out-Null
-        $machPattEl.SetAttribute("machineIndex", $m)
+        $machPattEl.SetAttribute("machine", (Sanitize-XmlString $ParaInfo[$m].Name))
 
         $numPatterns = Read-Word $Bytes $posRef
         $numTracks = Read-Word $Bytes $posRef
@@ -860,7 +862,7 @@ function Parse-PATT {
 
 # --- SEQU ---
 function Parse-SEQU {
-    param([byte[]]$Bytes, [uint32]$Offset, [uint32]$Size, [System.Xml.XmlDocument]$Xml, [System.Xml.XmlElement]$Parent)
+    param([byte[]]$Bytes, [uint32]$Offset, [uint32]$Size, [System.Xml.XmlDocument]$Xml, [System.Xml.XmlElement]$Parent, [array]$ParaInfo)
     $pos = [int]$Offset
     $posRef = [ref]$pos
 
@@ -883,7 +885,7 @@ function Parse-SEQU {
         $bytesPerPos = Read-Byte $Bytes $posRef
         $bytesPerEvent = Read-Byte $Bytes $posRef
 
-        $sEl.SetAttribute("machineIndex", $machIdx)
+        $sEl.SetAttribute("machine", (Sanitize-XmlString $ParaInfo[$machIdx].Name))
         $sEl.SetAttribute("numEvents", $numEvents)
         $sEl.SetAttribute("bytesPerPos", $bytesPerPos)
         $sEl.SetAttribute("bytesPerEvent", $bytesPerEvent)
@@ -1017,6 +1019,17 @@ function ConvertTo-Buzz {
     # We need to build each section's binary data, then assemble the file.
     # The section order in the XML determines section order in the file.
 
+    # Build machine name -> index lookup from PARA section
+    $machineNameToIndex = @{}
+    $paraEl = $root.SelectSingleNode("PARA")
+    if ($paraEl) {
+        $paraMachines = @($paraEl.SelectNodes("Machine"))
+        for ($mi = 0; $mi -lt $paraMachines.Count; $mi++) {
+            $mName = $paraMachines[$mi].GetAttribute("name")
+            $machineNameToIndex[$mName] = $mi
+        }
+    }
+
     $sectionOrder = @()
     $sectionData = @{}
 
@@ -1032,8 +1045,8 @@ function ConvertTo-Buzz {
             "BVER" { $data = Encode-BVER $child }           # BVER encoding (Encode-BVER)
             "PARA" { $data = Encode-PARA $child }           # PARA encoding (Encode-PARA)
             "MACH" { $data = Encode-MACH $child $root }     # MACH encoding (Encode-MACH)
-            "CONN" { $data = Encode-CONN $child }           # CONN encoding (Encode-CONN)
-            "SEQU" { $data = Encode-SEQU $child }           # SEQU encoding (Encode-SEQU)
+            "CONN" { $data = Encode-CONN $child $machineNameToIndex }  # CONN encoding (Encode-CONN)
+            "SEQU" { $data = Encode-SEQU $child $machineNameToIndex }  # SEQU encoding (Encode-SEQU)
             "WAVT" { $data = Encode-WAVT $child }           # WAVT encoding (Encode-WAVT)
             "WAVE" { $data = Encode-WAVE $child }           # WAVE encoding (Encode-WAVE)
             "PATT" { $data = Encode-PATT $child }     # PATT encoding (Encode-PATT)
@@ -1238,7 +1251,7 @@ function Encode-MACH {
 
 # --- CONN ---
 function Encode-CONN {
-    param([System.Xml.XmlElement]$El)
+    param([System.Xml.XmlElement]$El, [hashtable]$NameToIndex)
     $ms = New-Object System.IO.MemoryStream
     $bw = New-Object System.IO.BinaryWriter($ms)
 
@@ -1246,8 +1259,10 @@ function Encode-CONN {
     $bw.Write([uint16]$conns.Count)
 
     foreach ($conn in $conns) {
-        $bw.Write([uint16]$conn.GetAttribute("source"))
-        $bw.Write([uint16]$conn.GetAttribute("destination"))
+        $srcName = $conn.GetAttribute("source")
+        $dstName = $conn.GetAttribute("destination")
+        $bw.Write([uint16]$NameToIndex[$srcName])
+        $bw.Write([uint16]$NameToIndex[$dstName])
         $bw.Write([uint16]$conn.GetAttribute("amp"))
         $bw.Write([uint16]$conn.GetAttribute("pan"))
     }
@@ -1259,7 +1274,7 @@ function Encode-CONN {
 
 # --- SEQU ---
 function Encode-SEQU {
-    param([System.Xml.XmlElement]$El)
+    param([System.Xml.XmlElement]$El, [hashtable]$NameToIndex)
     $ms = New-Object System.IO.MemoryStream
     $bw = New-Object System.IO.BinaryWriter($ms)
 
@@ -1271,7 +1286,8 @@ function Encode-SEQU {
     $bw.Write([uint16]$seqs.Count)
 
     foreach ($seq in $seqs) {
-        $bw.Write([uint16]$seq.GetAttribute("machineIndex"))
+        $machName = $seq.GetAttribute("machine")
+        $bw.Write([uint16]$NameToIndex[$machName])
         $bw.Write([uint32]$seq.GetAttribute("numEvents"))
         $bytesPerPos = [byte]$seq.GetAttribute("bytesPerPos")
         $bytesPerEvent = [byte]$seq.GetAttribute("bytesPerEvent")
