@@ -7,6 +7,7 @@ A PowerShell tool for converting [Jeskola Buzz](https://jeskola.net/buzz/) song 
 - **Decode** - Convert .bmx binary files to human-readable XML
 - **Encode** - Convert XML back to .bmx with byte-for-byte round-trip fidelity
 - **Remap** - Find and replace VST plugin paths embedded in machine data
+- **Machines** - List and delete machines from song files
 - **GUI** - WinForms frontend for non-technical users
 
 All BMX sections are fully supported: BVER, PARA, MACH, CONN, CONX, MACX, WAVT, PATT, PAT2, PATX, SEQU, BLAH, PDLG, MIDI, WAVE, BGUI.
@@ -50,6 +51,32 @@ Replace a path prefix across all machines:
     -RemapTo "D:\Audio\VST Plugins"
 ```
 
+### List Machines
+
+```powershell
+.\Buzz2XML.ps1 -Mode machines -InputFile mysong.bmx -ListMachines
+```
+
+Shows all machines in the song with their type (generator/effect/hidden).
+
+### Delete Machines
+
+Delete by wildcard pattern:
+
+```powershell
+.\Buzz2XML.ps1 -Mode machines -InputFile mysong.bmx -OutputFile cleaned.bmx `
+    -DeletePattern "SVerb*"
+```
+
+Delete specific machines by exact name:
+
+```powershell
+.\Buzz2XML.ps1 -Mode machines -InputFile mysong.bmx -OutputFile cleaned.bmx `
+    -DeleteNames "SVerb","SVerb2","SVerb22"
+```
+
+Both `-DeletePattern` and `-DeleteNames` can be combined. The Master machine cannot be deleted. All references (connections, patterns, sequences, MIDI bindings, etc.) are cleaned up automatically.
+
 ### Help
 
 ```powershell
@@ -71,6 +98,7 @@ Launches a WinForms interface with tabs for Decode, Encode, and Remap operations
 - A `.log` file is created alongside the output file for diagnostics.
 - Round-trip fidelity has been verified on files with 300+ machines and 1 MB+ pattern sections.
 - The remap feature only changes path prefixes, preserving filenames and null-padding the buffer to maintain binary compatibility.
+- Machine deletion removes the machine from all sections: PARA, MACH, CONN, PATT, PAT2, PATX, SEQU, MACX, MIDI. Associated hidden pattern editors (pe machines) are auto-detected and removed. CONX and PDLG are dropped since they use opaque machine indices.
 
 ## License
 

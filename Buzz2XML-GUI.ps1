@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    GUI frontend for Buzz2XML - Jeskola Buzz file converter and VST path remapper.
+    GUI frontend for Buzz2XML - Jeskola Buzz file converter, VST path remapper, and machine manager.
 .DESCRIPTION
     Launches a Windows Forms GUI that wraps the Buzz2XML.ps1 command-line tool.
-    Provides tabs for Decode, Encode, and Remap operations with file browse dialogs.
+    Provides tabs for Decode, Encode, Remap, and Machines operations with file browse dialogs.
 #>
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -448,6 +448,166 @@ $btnRemap.Add_Click({
     }
     $cliArgs = "-Mode remap -InputFile `"$($txtRemIn.Text)`" -OutputFile `"$($txtRemOut.Text)`" -RemapFrom `"$($txtRemFrom.Text)`" -RemapTo `"$($txtRemTo.Text)`""
     Invoke-CliCommand -Arguments $cliArgs -OutputBox $txtRemLog
+})
+
+# ============================================================================
+# Tab 4: Machines (List / Delete)
+# ============================================================================
+
+$tabMach = New-Object System.Windows.Forms.TabPage
+$tabMach.Text = "Machines"
+$tabControl.TabPages.Add($tabMach)
+
+# Input file row
+$lblMachIn = New-Object System.Windows.Forms.Label
+$lblMachIn.Text = "Input BMX File:"
+$lblMachIn.Location = New-Object System.Drawing.Point(15, 20)
+$lblMachIn.AutoSize = $true
+$tabMach.Controls.Add($lblMachIn)
+
+$txtMachIn = New-Object System.Windows.Forms.TextBox
+$txtMachIn.Location = New-Object System.Drawing.Point(15, 40)
+$txtMachIn.Size = New-Object System.Drawing.Size(440, 23)
+$tabMach.Controls.Add($txtMachIn)
+
+$btnMachIn = New-Object System.Windows.Forms.Button
+$btnMachIn.Text = "Browse..."
+$btnMachIn.Location = New-Object System.Drawing.Point(465, 38)
+$btnMachIn.Size = New-Object System.Drawing.Size(85, 27)
+$btnMachIn.Add_Click({
+    $file = Show-FileDialog -Title "Select Buzz BMX File" -Filter "Buzz Files (*.bmx)|*.bmx|All Files (*.*)|*.*"
+    if ($file) {
+        $txtMachIn.Text = $file
+        # Auto-fill output with _cleaned suffix
+        $dir = [System.IO.Path]::GetDirectoryName($file)
+        $name = [System.IO.Path]::GetFileNameWithoutExtension($file)
+        $ext = [System.IO.Path]::GetExtension($file)
+        $txtMachOut.Text = Join-Path $dir "${name}_cleaned${ext}"
+    }
+})
+$tabMach.Controls.Add($btnMachIn)
+
+# List Machines button
+$btnListMach = New-Object System.Windows.Forms.Button
+$btnListMach.Text = "List Machines"
+$btnListMach.Location = New-Object System.Drawing.Point(560, 38)
+$btnListMach.Size = New-Object System.Drawing.Size(85, 27)
+$btnListMach.BackColor = [System.Drawing.Color]::FromArgb(100, 100, 160)
+$btnListMach.ForeColor = [System.Drawing.Color]::White
+$btnListMach.FlatStyle = "Flat"
+$btnListMach.Add_Click({
+    if (-not $txtMachIn.Text) {
+        [System.Windows.Forms.MessageBox]::Show("Please select an input BMX file.", "Missing Input", "OK", "Warning")
+        return
+    }
+    $cliArgs = "-Mode machines -InputFile `"$($txtMachIn.Text)`" -ListMachines"
+    Invoke-CliCommand -Arguments $cliArgs -OutputBox $txtMachLog
+})
+$tabMach.Controls.Add($btnListMach)
+
+# Wildcard pattern row
+$lblMachPattern = New-Object System.Windows.Forms.Label
+$lblMachPattern.Text = "Delete Pattern (wildcard, e.g. SVerb*):"
+$lblMachPattern.Location = New-Object System.Drawing.Point(15, 80)
+$lblMachPattern.AutoSize = $true
+$tabMach.Controls.Add($lblMachPattern)
+
+$txtMachPattern = New-Object System.Windows.Forms.TextBox
+$txtMachPattern.Location = New-Object System.Drawing.Point(15, 100)
+$txtMachPattern.Size = New-Object System.Drawing.Size(625, 23)
+$tabMach.Controls.Add($txtMachPattern)
+
+# Exact names (one per line)
+$lblMachNames = New-Object System.Windows.Forms.Label
+$lblMachNames.Text = "Delete Exact Names (one per line):"
+$lblMachNames.Location = New-Object System.Drawing.Point(15, 130)
+$lblMachNames.AutoSize = $true
+$tabMach.Controls.Add($lblMachNames)
+
+$txtMachNames = New-Object System.Windows.Forms.TextBox
+$txtMachNames.Location = New-Object System.Drawing.Point(15, 150)
+$txtMachNames.Size = New-Object System.Drawing.Size(625, 60)
+$txtMachNames.Multiline = $true
+$txtMachNames.ScrollBars = "Vertical"
+$txtMachNames.Font = New-Object System.Drawing.Font("Consolas", 9)
+$tabMach.Controls.Add($txtMachNames)
+
+# Output file row
+$lblMachOut = New-Object System.Windows.Forms.Label
+$lblMachOut.Text = "Output BMX File:"
+$lblMachOut.Location = New-Object System.Drawing.Point(15, 220)
+$lblMachOut.AutoSize = $true
+$tabMach.Controls.Add($lblMachOut)
+
+$txtMachOut = New-Object System.Windows.Forms.TextBox
+$txtMachOut.Location = New-Object System.Drawing.Point(15, 240)
+$txtMachOut.Size = New-Object System.Drawing.Size(530, 23)
+$tabMach.Controls.Add($txtMachOut)
+
+$btnMachOut = New-Object System.Windows.Forms.Button
+$btnMachOut.Text = "Browse..."
+$btnMachOut.Location = New-Object System.Drawing.Point(555, 238)
+$btnMachOut.Size = New-Object System.Drawing.Size(85, 27)
+$btnMachOut.Add_Click({
+    $file = Show-FileDialog -Title "Save Cleaned BMX File As" -Filter "Buzz Files (*.bmx)|*.bmx|All Files (*.*)|*.*" -Save $true
+    if ($file) { $txtMachOut.Text = $file }
+})
+$tabMach.Controls.Add($btnMachOut)
+
+# Delete button
+$btnDelete = New-Object System.Windows.Forms.Button
+$btnDelete.Text = "Delete Machines"
+$btnDelete.Location = New-Object System.Drawing.Point(15, 275)
+$btnDelete.Size = New-Object System.Drawing.Size(200, 35)
+$btnDelete.BackColor = [System.Drawing.Color]::FromArgb(160, 50, 160)
+$btnDelete.ForeColor = [System.Drawing.Color]::White
+$btnDelete.FlatStyle = "Flat"
+$tabMach.Controls.Add($btnDelete)
+
+# Output log area
+$txtMachLog = New-Object System.Windows.Forms.TextBox
+$txtMachLog.Location = New-Object System.Drawing.Point(15, 320)
+$txtMachLog.Size = New-Object System.Drawing.Size(625, 160)
+$txtMachLog.Multiline = $true
+$txtMachLog.ScrollBars = "Both"
+$txtMachLog.WordWrap = $false
+$txtMachLog.ReadOnly = $true
+$txtMachLog.Font = New-Object System.Drawing.Font("Consolas", 9)
+$txtMachLog.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 30)
+$txtMachLog.ForeColor = [System.Drawing.Color]::FromArgb(200, 220, 200)
+$tabMach.Controls.Add($txtMachLog)
+
+$btnDelete.Add_Click({
+    if (-not $txtMachIn.Text) {
+        [System.Windows.Forms.MessageBox]::Show("Please select an input BMX file.", "Missing Input", "OK", "Warning")
+        return
+    }
+    if (-not $txtMachOut.Text) {
+        [System.Windows.Forms.MessageBox]::Show("Please specify an output BMX file.", "Missing Output", "OK", "Warning")
+        return
+    }
+
+    $hasPattern = $txtMachPattern.Text.Trim().Length -gt 0
+    $nameLines = @($txtMachNames.Text -split "`r?`n" | Where-Object { $_.Trim().Length -gt 0 })
+    $hasNames = $nameLines.Count -gt 0
+
+    if (-not $hasPattern -and -not $hasNames) {
+        [System.Windows.Forms.MessageBox]::Show("Please enter a wildcard pattern and/or exact machine names to delete.`n`nTip: Click 'List Machines' first to see what machines exist.", "Nothing to Delete", "OK", "Warning")
+        return
+    }
+
+    # Build CLI arguments
+    $cliArgs = "-Mode machines -InputFile `"$($txtMachIn.Text)`" -OutputFile `"$($txtMachOut.Text)`""
+    if ($hasPattern) {
+        $cliArgs += " -DeletePattern `"$($txtMachPattern.Text.Trim())`""
+    }
+    if ($hasNames) {
+        # Pass each name as a separate array element using PowerShell array syntax
+        $nameArgs = ($nameLines | ForEach-Object { "`"$($_.Trim())`"" }) -join ","
+        $cliArgs += " -DeleteNames $nameArgs"
+    }
+
+    Invoke-CliCommand -Arguments $cliArgs -OutputBox $txtMachLog
 })
 
 # ============================================================================

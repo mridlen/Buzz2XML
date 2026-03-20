@@ -5,11 +5,11 @@
 
 .DESCRIPTION
     This script can convert a Buzz .bmx binary file to an XML representation,
-    convert that XML back to a .bmx binary file, and remap VST plugin paths
-    embedded in machine data blobs.
+    convert that XML back to a .bmx binary file, remap VST plugin paths
+    embedded in machine data blobs, and list or delete machines.
 
 .PARAMETER Mode
-    "decode" (bmx -> xml), "encode" (xml -> bmx), or "remap" (rewrite VST paths in bmx).
+    "decode" (bmx -> xml), "encode" (xml -> bmx), "remap" (rewrite VST paths), or "machines" (list/delete machines).
 
 .PARAMETER InputFile
     Path to the input file (.bmx for decode/remap, .xml for encode).
@@ -26,6 +26,15 @@
 .PARAMETER ListPaths
     (remap mode) If set, just list all VST/DLL paths found in the file without modifying anything.
 
+.PARAMETER ListMachines
+    (machines mode) If set, just list all machines in the file without modifying anything.
+
+.PARAMETER DeletePattern
+    (machines mode) Wildcard pattern for machines to delete (e.g. "SVerb*").
+
+.PARAMETER DeleteNames
+    (machines mode) Array of exact machine names to delete.
+
 .PARAMETER Help
     Show the usage/help page.
 
@@ -34,6 +43,9 @@
     .\Buzz2XML.ps1 -Mode encode -InputFile test_buzz.xml -OutputFile test_buzz_rebuilt.bmx
     .\Buzz2XML.ps1 -Mode remap -InputFile test_buzz.bmx -OutputFile remapped.bmx -RemapFrom "C:\Program Files (x86)\Jeskola\Buzz\Gear\Vst" -RemapTo "D:\Audio\VST"
     .\Buzz2XML.ps1 -Mode remap -InputFile test_buzz.bmx -ListPaths
+    .\Buzz2XML.ps1 -Mode machines -InputFile test_buzz.bmx -ListMachines
+    .\Buzz2XML.ps1 -Mode machines -InputFile test_buzz.bmx -OutputFile cleaned.bmx -DeletePattern "SVerb*"
+    .\Buzz2XML.ps1 -Mode machines -InputFile test_buzz.bmx -OutputFile cleaned.bmx -DeleteNames "SVerb","SVerb2"
     .\Buzz2XML.ps1 -Help
 #>
 
@@ -49,6 +61,13 @@ param(
     [string]$RemapTo,
 
     [switch]$ListPaths,
+
+    # machines mode: list or delete machines
+    [switch]$ListMachines,
+
+    [string]$DeletePattern,
+
+    [string[]]$DeleteNames,
 
     [Alias("h")]
     [switch]$Help,
@@ -94,6 +113,18 @@ function Show-Help {
     Write-Host "    Use -ListPaths first to see what paths exist in the file."
     Write-Host "    The remap only changes the path prefix, preserving the filename."
     Write-Host ""
+    Write-Host "  LIST / DELETE MACHINES:" -ForegroundColor Green
+    Write-Host "    .\Buzz2XML.ps1 -Mode machines -InputFile <file.bmx> -ListMachines"
+    Write-Host "    .\Buzz2XML.ps1 -Mode machines -InputFile <file.bmx> -OutputFile <out.bmx> ``"
+    Write-Host "        -DeletePattern <wildcard>"
+    Write-Host "    .\Buzz2XML.ps1 -Mode machines -InputFile <file.bmx> -OutputFile <out.bmx> ``"
+    Write-Host "        -DeleteNames <name1>,<name2>,..."
+    Write-Host ""
+    Write-Host "    Lists or deletes machines from a Buzz song file."
+    Write-Host "    Use -ListMachines to see all machines. Use -DeletePattern for wildcard"
+    Write-Host "    matching (e.g. 'SVerb*') or -DeleteNames for exact names (as an array)."
+    Write-Host "    Both can be combined. The Master machine cannot be deleted."
+    Write-Host ""
     Write-Host "PARAMETERS:" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "  -Mode <string>         " -NoNewline -ForegroundColor White
@@ -108,6 +139,12 @@ function Show-Help {
     Write-Host "New path prefix to replace with (remap mode)"
     Write-Host "  -ListPaths             " -NoNewline -ForegroundColor White
     Write-Host "List all embedded file paths without modifying (remap mode)"
+    Write-Host "  -ListMachines          " -NoNewline -ForegroundColor White
+    Write-Host "List all machines in the file (machines mode)"
+    Write-Host "  -DeletePattern <str>   " -NoNewline -ForegroundColor White
+    Write-Host "Wildcard pattern for machines to delete (machines mode)"
+    Write-Host "  -DeleteNames <arr>     " -NoNewline -ForegroundColor White
+    Write-Host "Exact machine names to delete, as array (machines mode)"
     Write-Host "  -Help, -h             " -NoNewline -ForegroundColor White
     Write-Host "Show this help page"
     Write-Host ""
@@ -127,6 +164,17 @@ function Show-Help {
     Write-Host "      -RemapFrom `"C:\Program Files (x86)\Jeskola\Buzz\Gear\Vst`" ``"
     Write-Host "      -RemapTo `"D:\Audio\VST Plugins`""
     Write-Host ""
+    Write-Host "  # List all machines in a song" -ForegroundColor DarkGray
+    Write-Host "  .\Buzz2XML.ps1 -Mode machines -InputFile mysong.bmx -ListMachines"
+    Write-Host ""
+    Write-Host "  # Delete machines matching a wildcard" -ForegroundColor DarkGray
+    Write-Host "  .\Buzz2XML.ps1 -Mode machines -InputFile mysong.bmx -OutputFile cleaned.bmx ``"
+    Write-Host "      -DeletePattern `"SVerb*`""
+    Write-Host ""
+    Write-Host "  # Delete specific machines by exact name" -ForegroundColor DarkGray
+    Write-Host "  .\Buzz2XML.ps1 -Mode machines -InputFile mysong.bmx -OutputFile cleaned.bmx ``"
+    Write-Host "      -DeleteNames `"SVerb`",`"SVerb2`",`"SVerb22`""
+    Write-Host ""
     Write-Host "NOTES:" -ForegroundColor Yellow
     Write-Host "  - A .log file is created alongside the output file for diagnostics."
     Write-Host "  - The GUI version can be launched with: .\Buzz2XML-GUI.ps1"
@@ -140,7 +188,7 @@ function Show-Help {
 
 $showHelp = $false
 if ($Help) { $showHelp = $true }
-if (-not $Mode -and -not $ListPaths -and -not $Help) { $showHelp = $true }
+if (-not $Mode -and -not $ListPaths -and -not $ListMachines -and -not $Help) { $showHelp = $true }
 # Check if /?, /h, /help were passed as -Mode value (PowerShell treats / as param prefix)
 $helpValues = @('/?', '/h', '/help', '-help', '-h', '--help')
 if ($Mode -in $helpValues) { $showHelp = $true }
@@ -164,7 +212,7 @@ if (-not $Mode) {
     Write-Host "ERROR: -Mode is required. Use -Help for usage information." -ForegroundColor Red
     exit 1
 }
-$validModes = @('decode', 'encode', 'remap')
+$validModes = @('decode', 'encode', 'remap', 'machines')
 if ($Mode -notin $validModes) {
     # Could be a help flag that got mangled by the shell (e.g., /help -> C:/Program Files/Git/help)
     if ($Mode -match 'help' -or $Mode -match '^\?$' -or $Mode -match '^[A-Z]:[/\\]$') {
@@ -390,8 +438,8 @@ function ConvertFrom-Buzz {
             "WAVT" { Parse-WAVT $bytes $sec.Offset $sec.Size $xml $root }       # WAVT parsing (Parse-WAVT)
             "WAVE" { Parse-WAVE $bytes $sec.Offset $sec.Size $xml $root }       # WAVE parsing (Parse-WAVE)
             "PATT" { Parse-PATT $bytes $sec.Offset $sec.Size $xml $root $paraInfo $machineInputCounts }  # PATT parsing (Parse-PATT)
-            "PAT2" { Parse-GenericSection $bytes $sec.Offset $sec.Size $xml $root "PAT2" }  # PAT2 (raw)
-            "PATX" { Parse-GenericSection $bytes $sec.Offset $sec.Size $xml $root "PATX" }  # PATX (raw)
+            "PAT2" { Parse-PAT2 $bytes $sec.Offset $sec.Size $xml $root $paraInfo }  # PAT2 parsing (Parse-PAT2)
+            "PATX" { Parse-PATX $bytes $sec.Offset $sec.Size $xml $root $paraInfo }  # PATX parsing (Parse-PATX)
             "SEQU" { Parse-SEQU $bytes $sec.Offset $sec.Size $xml $root $paraInfo }  # SEQU parsing (Parse-SEQU)
             "BLAH" { Parse-BLAH $bytes $sec.Offset $sec.Size $xml $root }       # BLAH parsing (Parse-BLAH)
             "PDLG" { Parse-PDLG $bytes $sec.Offset $sec.Size $xml $root }       # PDLG parsing (Parse-PDLG)
@@ -837,24 +885,39 @@ function Parse-PATT {
             $patEl.SetAttribute("rows", $patLength)
 
             # Input connection data: for each non-hidden input, word sourceMachineIndex + rows * (word amp + word pan)
-            $inputDataSize = $inputCount * (2 + $patLength * 4)
+            # Parse input connections with machine names instead of indices for safe machine deletion
+            for ($ic = 0; $ic -lt $inputCount; $ic++) {
+                $srcIdx = [int](Read-Word $Bytes $posRef)
+                $icEl = $Xml.CreateElement("InputConnection")
+                $patEl.AppendChild($icEl) | Out-Null
 
-            # Parameter data: rows * (globalSize + trackSize * numTracks)
+                # Resolve machine index to name
+                if ($srcIdx -lt $ParaInfo.Count) {
+                    $icEl.SetAttribute("source", (Sanitize-XmlString $ParaInfo[$srcIdx].Name))
+                } else {
+                    $icEl.SetAttribute("sourceIndex", $srcIdx)
+                    Write-Log "  WARNING: PATT machine $m pattern $p input $ic has invalid source index $srcIdx"
+                }
+
+                # Read amp/pan data for all rows as base64
+                $ampPanSize = $patLength * 4  # rows * (word amp + word pan)
+                if ($ampPanSize -gt 0) {
+                    $ampPanData = Read-ByteArray $Bytes $posRef $ampPanSize
+                    $icEl.InnerText = [Convert]::ToBase64String($ampPanData)
+                }
+            }
+
+            # Parameter data: rows * (globalSize + trackSize * numTracks) — stored as base64
             $paramDataSize = $paramRowSize * $patLength
-
-            # Total pattern data = input data + parameter data
-            $totalDataSize = $inputDataSize + $paramDataSize
-            $patEl.SetAttribute("inputDataSize", $inputDataSize)
-            $patEl.SetAttribute("paramDataSize", $paramDataSize)
-
-            # Store all pattern data (input + params) as base64 blob
-            if ($totalDataSize -gt 0) {
-                if (($pos + $totalDataSize) -gt $Bytes.Length) {
-                    Write-Log "WARNING: PATT machine $m pattern $p would read past file end (pos=$pos, need=$totalDataSize, fileLen=$($Bytes.Length))"
+            if ($paramDataSize -gt 0) {
+                if (($pos + $paramDataSize) -gt $Bytes.Length) {
+                    Write-Log "WARNING: PATT machine $m pattern $p would read past file end (pos=$pos, need=$paramDataSize, fileLen=$($Bytes.Length))"
                     break
                 }
-                $patData = Read-ByteArray $Bytes $posRef $totalDataSize
-                $patEl.InnerText = [Convert]::ToBase64String($patData)
+                $paramData = Read-ByteArray $Bytes $posRef $paramDataSize
+                $pdEl = $Xml.CreateElement("ParamData")
+                $patEl.AppendChild($pdEl) | Out-Null
+                $pdEl.InnerText = [Convert]::ToBase64String($paramData)
             }
         }
     }
@@ -882,13 +945,19 @@ function Parse-SEQU {
 
         $machIdx = Read-Word $Bytes $posRef
         $numEvents = Read-DWord $Bytes $posRef
-        $bytesPerPos = Read-Byte $Bytes $posRef
-        $bytesPerEvent = Read-Byte $Bytes $posRef
 
         $sEl.SetAttribute("machine", (Sanitize-XmlString $ParaInfo[$machIdx].Name))
         $sEl.SetAttribute("numEvents", $numEvents)
-        $sEl.SetAttribute("bytesPerPos", $bytesPerPos)
-        $sEl.SetAttribute("bytesPerEvent", $bytesPerEvent)
+
+        # bytesPerPos and bytesPerEvent are only present when numEvents > 0
+        $bytesPerPos = 0
+        $bytesPerEvent = 0
+        if ($numEvents -gt 0) {
+            $bytesPerPos = Read-Byte $Bytes $posRef
+            $bytesPerEvent = Read-Byte $Bytes $posRef
+            $sEl.SetAttribute("bytesPerPos", $bytesPerPos)
+            $sEl.SetAttribute("bytesPerEvent", $bytesPerEvent)
+        }
 
         for ($e = 0; $e -lt $numEvents; $e++) {
             $evEl = $Xml.CreateElement("Event")
@@ -989,6 +1058,147 @@ function Parse-BGUI {
     $Parent.AppendChild($el) | Out-Null
 }
 
+# --- PAT2 (new pattern editor data, section type TAP2 in ReBuzz) ---
+function Parse-PAT2 {
+    param([byte[]]$Bytes, [uint32]$Offset, [uint32]$Size, [System.Xml.XmlDocument]$Xml, [System.Xml.XmlElement]$Parent, [array]$ParaInfo)
+    $pos = [int]$Offset
+    $posRef = [ref]$pos
+
+    $pat2El = $Xml.CreateElement("PAT2")
+    $Parent.AppendChild($pat2El) | Out-Null
+
+    $version = Read-Byte $Bytes $posRef
+    $pat2El.SetAttribute("version", $version)
+
+    if ($version -ne 2) {
+        # Unknown version, store remainder as raw base64
+        $remaining = $Size - 1
+        if ($remaining -gt 0) {
+            $data = Read-ByteArray $Bytes $posRef $remaining
+            $pat2El.InnerText = [Convert]::ToBase64String($data)
+            $pat2El.SetAttribute("encoding", "base64")
+        }
+        Write-Log "  PAT2: unknown version $version, stored as base64"
+        return
+    }
+
+    $numMachines = $ParaInfo.Count
+    for ($m = 0; $m -lt $numMachines; $m++) {
+        $machEl = $Xml.CreateElement("MachineData")
+        $pat2El.AppendChild($machEl) | Out-Null
+        $machEl.SetAttribute("machine", (Sanitize-XmlString $ParaInfo[$m].Name))
+
+        $numPatterns = Read-Word $Bytes $posRef
+        $machEl.SetAttribute("numPatterns", $numPatterns)
+
+        for ($p = 0; $p -lt $numPatterns; $p++) {
+            $patEl = $Xml.CreateElement("Pattern")
+            $machEl.AppendChild($patEl) | Out-Null
+
+            $patName = Read-AsciizString $Bytes $posRef
+            $patEl.SetAttribute("name", (Sanitize-XmlString $patName))
+
+            $colCount = Read-Int32 $Bytes $posRef
+            $patEl.SetAttribute("columnCount", $colCount)
+
+            for ($c = 0; $c -lt $colCount; $c++) {
+                $colEl = $Xml.CreateElement("Column")
+                $patEl.AppendChild($colEl) | Out-Null
+
+                $pMachIdx = [int](Read-Word $Bytes $posRef)
+                # Store machine name instead of index (0xFFFF = no machine)
+                if ($pMachIdx -eq 0xFFFF) {
+                    $colEl.SetAttribute("targetMachine", "none")
+                } elseif ($pMachIdx -lt $ParaInfo.Count) {
+                    $colEl.SetAttribute("targetMachine", (Sanitize-XmlString $ParaInfo[$pMachIdx].Name))
+                } else {
+                    $colEl.SetAttribute("targetMachineIndex", $pMachIdx)
+                    Write-Log "  WARNING: PAT2 machine $m pattern $p column $c has invalid target index $pMachIdx"
+                }
+
+                $group = Read-Int32 $Bytes $posRef
+                $indexInGroup = Read-Int32 $Bytes $posRef
+                $track = Read-Int32 $Bytes $posRef
+                $colEl.SetAttribute("group", $group)
+                $colEl.SetAttribute("indexInGroup", $indexInGroup)
+                $colEl.SetAttribute("track", $track)
+
+                $numEvents = Read-Int32 $Bytes $posRef
+                $colEl.SetAttribute("numEvents", $numEvents)
+
+                for ($e = 0; $e -lt $numEvents; $e++) {
+                    $evEl = $Xml.CreateElement("Event")
+                    $colEl.AppendChild($evEl) | Out-Null
+                    $evEl.SetAttribute("time", (Read-Int32 $Bytes $posRef))
+                    $evEl.SetAttribute("value", (Read-Int32 $Bytes $posRef))
+                    $evEl.SetAttribute("duration", (Read-Int32 $Bytes $posRef))
+                }
+
+                $numMeta = Read-Int32 $Bytes $posRef
+                for ($md = 0; $md -lt $numMeta; $md++) {
+                    $metaEl = $Xml.CreateElement("Meta")
+                    $colEl.AppendChild($metaEl) | Out-Null
+                    $metaEl.SetAttribute("key", (Read-AsciizString $Bytes $posRef))
+                    $metaEl.SetAttribute("value", (Read-AsciizString $Bytes $posRef))
+                }
+            }
+        }
+    }
+    Write-Log "  PAT2: parsed $numMachines machines (version $version)"
+}
+
+# --- PATX (pattern editor assignment, section type XTAP in ReBuzz) ---
+function Parse-PATX {
+    param([byte[]]$Bytes, [uint32]$Offset, [uint32]$Size, [System.Xml.XmlDocument]$Xml, [System.Xml.XmlElement]$Parent, [array]$ParaInfo)
+    $pos = [int]$Offset
+    $posRef = [ref]$pos
+
+    $patxEl = $Xml.CreateElement("PATX")
+    $Parent.AppendChild($patxEl) | Out-Null
+
+    $version = Read-Byte $Bytes $posRef
+    $patxEl.SetAttribute("version", $version)
+
+    if ($version -ne 1) {
+        # Unknown version, store remainder as raw base64
+        $remaining = $Size - 1
+        if ($remaining -gt 0) {
+            $data = Read-ByteArray $Bytes $posRef $remaining
+            $patxEl.InnerText = [Convert]::ToBase64String($data)
+            $patxEl.SetAttribute("encoding", "base64")
+        }
+        Write-Log "  PATX: unknown version $version, stored as base64"
+        return
+    }
+
+    $numMachines = $ParaInfo.Count
+    for ($m = 0; $m -lt $numMachines; $m++) {
+        $machEl = $Xml.CreateElement("MachineEditor")
+        $patxEl.AppendChild($machEl) | Out-Null
+        $machEl.SetAttribute("machine", (Sanitize-XmlString $ParaInfo[$m].Name))
+
+        $numPatterns = Read-Word $Bytes $posRef
+        $machEl.SetAttribute("numPatterns", $numPatterns)
+
+        for ($p = 0; $p -lt $numPatterns; $p++) {
+            $peEl = $Xml.CreateElement("PatternEditor")
+            $machEl.AppendChild($peEl) | Out-Null
+
+            $editorIdx = [int](Read-Word $Bytes $posRef)
+            # Store machine name instead of index (0xFFFF = built-in editor)
+            if ($editorIdx -eq 0xFFFF) {
+                $peEl.SetAttribute("editor", "builtin")
+            } elseif ($editorIdx -lt $ParaInfo.Count) {
+                $peEl.SetAttribute("editor", (Sanitize-XmlString $ParaInfo[$editorIdx].Name))
+            } else {
+                $peEl.SetAttribute("editorIndex", $editorIdx)
+                Write-Log "  WARNING: PATX machine $m pattern $p has invalid editor index $editorIdx"
+            }
+        }
+    }
+    Write-Log "  PATX: parsed $numMachines machines (version $version)"
+}
+
 # --- Generic/Unknown section ---
 function Parse-GenericSection {
     param([byte[]]$Bytes, [uint32]$Offset, [uint32]$Size, [System.Xml.XmlDocument]$Xml, [System.Xml.XmlElement]$Parent, [string]$SectionName)
@@ -1049,12 +1259,14 @@ function ConvertTo-Buzz {
             "SEQU" { $data = Encode-SEQU $child $machineNameToIndex }  # SEQU encoding (Encode-SEQU)
             "WAVT" { $data = Encode-WAVT $child }           # WAVT encoding (Encode-WAVT)
             "WAVE" { $data = Encode-WAVE $child }           # WAVE encoding (Encode-WAVE)
-            "PATT" { $data = Encode-PATT $child }     # PATT encoding (Encode-PATT)
+            "PATT" { $data = Encode-PATT $child $machineNameToIndex }  # PATT encoding (Encode-PATT)
             "BLAH" { $data = Encode-BLAH $child }           # BLAH encoding (Encode-BLAH)
             "MIDI" { $data = Encode-MIDI $child }           # MIDI encoding (Encode-MIDI)
             "MACX" { $data = Encode-MACX $child }           # MACX encoding (Encode-MACX)
+            "PAT2" { $data = Encode-PAT2 $child $machineNameToIndex }  # PAT2 encoding (Encode-PAT2)
+            "PATX" { $data = Encode-PATX $child $machineNameToIndex }  # PATX encoding (Encode-PATX)
             default {
-                # Base64-encoded raw section (CONX, PDLG, BGUI, PAT2, PATX, etc.)
+                # Base64-encoded raw section (CONX, PDLG, BGUI, etc.)
                 $data = Encode-RawSection $child            # raw section encoding (Encode-RawSection)
             }
         }
@@ -1288,11 +1500,18 @@ function Encode-SEQU {
     foreach ($seq in $seqs) {
         $machName = $seq.GetAttribute("machine")
         $bw.Write([uint16]$NameToIndex[$machName])
-        $bw.Write([uint32]$seq.GetAttribute("numEvents"))
-        $bytesPerPos = [byte]$seq.GetAttribute("bytesPerPos")
-        $bytesPerEvent = [byte]$seq.GetAttribute("bytesPerEvent")
-        $bw.Write($bytesPerPos)
-        $bw.Write($bytesPerEvent)
+        $numEvents = [uint32]$seq.GetAttribute("numEvents")
+        $bw.Write($numEvents)
+
+        # bytesPerPos and bytesPerEvent are only written when numEvents > 0
+        $bytesPerPos = 0
+        $bytesPerEvent = 0
+        if ($numEvents -gt 0) {
+            $bytesPerPos = [byte]$seq.GetAttribute("bytesPerPos")
+            $bytesPerEvent = [byte]$seq.GetAttribute("bytesPerEvent")
+            $bw.Write($bytesPerPos)
+            $bw.Write($bytesPerEvent)
+        }
 
         $events = @($seq.SelectNodes("Event"))
         foreach ($ev in $events) {
@@ -1413,7 +1632,7 @@ function Encode-WAVE {
 
 # --- PATT ---
 function Encode-PATT {
-    param([System.Xml.XmlElement]$El)
+    param([System.Xml.XmlElement]$El, [hashtable]$NameToIndex)
     $ms = New-Object System.IO.MemoryStream
     $bw = New-Object System.IO.BinaryWriter($ms)
 
@@ -1431,11 +1650,30 @@ function Encode-PATT {
             Write-Asciiz $bw $patName
             $bw.Write([uint16]$pat.GetAttribute("rows"))
 
-            # Pattern data stored as base64 blob
-            $base64 = $pat.InnerText
-            if ($base64 -and $base64.Length -gt 0) {
-                $patBytes = [Convert]::FromBase64String($base64)
-                $bw.Write($patBytes)
+            # Input connection data: machine name -> index + amp/pan blob
+            $inputConns = @($pat.SelectNodes("InputConnection"))
+            foreach ($ic in $inputConns) {
+                # Resolve machine name back to index
+                $srcName = $ic.GetAttribute("source")
+                if ($srcName) {
+                    $bw.Write([uint16]$NameToIndex[$srcName])
+                } else {
+                    # Fallback: use stored numeric index
+                    $bw.Write([uint16]$ic.GetAttribute("sourceIndex"))
+                }
+                # Write amp/pan data
+                $ampPanBase64 = $ic.InnerText
+                if ($ampPanBase64 -and $ampPanBase64.Length -gt 0) {
+                    $ampPanBytes = [Convert]::FromBase64String($ampPanBase64)
+                    $bw.Write($ampPanBytes)
+                }
+            }
+
+            # Parameter data blob
+            $paramDataEl = $pat.SelectSingleNode("ParamData")
+            if ($paramDataEl) {
+                $paramBytes = [Convert]::FromBase64String($paramDataEl.InnerText)
+                $bw.Write($paramBytes)
             }
         }
     }
@@ -1522,6 +1760,107 @@ function Encode-RawSection {
     param([System.Xml.XmlElement]$El)
     $data = [Convert]::FromBase64String($El.InnerText)
     return ,$data
+}
+
+# --- PAT2 ---
+function Encode-PAT2 {
+    param([System.Xml.XmlElement]$El, [hashtable]$NameToIndex)
+    # Check if this was stored as raw base64 (unknown version)
+    if ($El.GetAttribute("encoding") -eq "base64") {
+        return ,([Convert]::FromBase64String($El.InnerText))
+    }
+
+    $ms = New-Object System.IO.MemoryStream
+    $bw = New-Object System.IO.BinaryWriter($ms)
+
+    $version = [byte]$El.GetAttribute("version")
+    $bw.Write($version)
+
+    $machines = @($El.SelectNodes("MachineData"))
+    foreach ($machEl in $machines) {
+        $patterns = @($machEl.SelectNodes("Pattern"))
+        $bw.Write([uint16]$patterns.Count)
+
+        foreach ($pat in $patterns) {
+            Write-Asciiz $bw ($pat.GetAttribute("name"))
+
+            $columns = @($pat.SelectNodes("Column"))
+            $bw.Write([int32]$columns.Count)
+
+            foreach ($col in $columns) {
+                # Resolve target machine name to index
+                $targetMach = $col.GetAttribute("targetMachine")
+                if ($targetMach -eq "none") {
+                    $bw.Write([uint16]0xFFFF)
+                } elseif ($targetMach -and $NameToIndex.ContainsKey($targetMach)) {
+                    $bw.Write([uint16]$NameToIndex[$targetMach])
+                } else {
+                    # Fallback: use stored numeric index
+                    $bw.Write([uint16]$col.GetAttribute("targetMachineIndex"))
+                }
+
+                $bw.Write([int32]$col.GetAttribute("group"))
+                $bw.Write([int32]$col.GetAttribute("indexInGroup"))
+                $bw.Write([int32]$col.GetAttribute("track"))
+
+                $events = @($col.SelectNodes("Event"))
+                $bw.Write([int32]$events.Count)
+                foreach ($ev in $events) {
+                    $bw.Write([int32]$ev.GetAttribute("time"))
+                    $bw.Write([int32]$ev.GetAttribute("value"))
+                    $bw.Write([int32]$ev.GetAttribute("duration"))
+                }
+
+                $metas = @($col.SelectNodes("Meta"))
+                $bw.Write([int32]$metas.Count)
+                foreach ($meta in $metas) {
+                    Write-Asciiz $bw ($meta.GetAttribute("key"))
+                    Write-Asciiz $bw ($meta.GetAttribute("value"))
+                }
+            }
+        }
+    }
+
+    $result = $ms.ToArray()
+    $bw.Close(); $ms.Close()
+    return ,$result
+}
+
+# --- PATX ---
+function Encode-PATX {
+    param([System.Xml.XmlElement]$El, [hashtable]$NameToIndex)
+    # Check if this was stored as raw base64 (unknown version)
+    if ($El.GetAttribute("encoding") -eq "base64") {
+        return ,([Convert]::FromBase64String($El.InnerText))
+    }
+
+    $ms = New-Object System.IO.MemoryStream
+    $bw = New-Object System.IO.BinaryWriter($ms)
+
+    $version = [byte]$El.GetAttribute("version")
+    $bw.Write($version)
+
+    $machines = @($El.SelectNodes("MachineEditor"))
+    foreach ($machEl in $machines) {
+        $editors = @($machEl.SelectNodes("PatternEditor"))
+        $bw.Write([uint16]$editors.Count)
+
+        foreach ($pe in $editors) {
+            $editor = $pe.GetAttribute("editor")
+            if ($editor -eq "builtin") {
+                $bw.Write([uint16]0xFFFF)
+            } elseif ($editor -and $NameToIndex.ContainsKey($editor)) {
+                $bw.Write([uint16]$NameToIndex[$editor])
+            } else {
+                # Fallback: use stored numeric index
+                $bw.Write([uint16]$pe.GetAttribute("editorIndex"))
+            }
+        }
+    }
+
+    $result = $ms.ToArray()
+    $bw.Close(); $ms.Close()
+    return ,$result
 }
 
 # ============================================================================
@@ -1673,6 +2012,364 @@ function Show-VstPaths {
 }
 
 # ============================================================================
+# Machines: list and delete machines from BMX files
+# ============================================================================
+
+# Show-MachineList: list all machines in a BMX file
+function Show-MachineList {
+    param([string]$BmxPath)
+
+    Write-Log "Listing machines in: $BmxPath"
+
+    # Decode to XML in memory
+    $bytes = [System.IO.File]::ReadAllBytes($BmxPath)
+    Write-Log "File size: $($bytes.Length) bytes"
+
+    # Read header and find PARA section
+    $magic = [System.Text.Encoding]::ASCII.GetString($bytes, 0, 4)
+    if ($magic -ne "Buzz") { throw "Not a valid Buzz file (magic='$magic')" }
+    $numSections = [BitConverter]::ToUInt32($bytes, 4)
+
+    $paraOffset = $null
+    $paraSize = $null
+    for ($i = 0; $i -lt $numSections; $i++) {
+        $dirPos = 8 + ($i * 12)
+        $secName = [System.Text.Encoding]::ASCII.GetString($bytes, $dirPos, 4).TrimEnd([char]0)
+        $secOffset = [BitConverter]::ToUInt32($bytes, $dirPos + 4)
+        $secSize = [BitConverter]::ToUInt32($bytes, $dirPos + 8)
+        if ($secName -eq "PARA") {
+            $paraOffset = $secOffset
+            $paraSize = $secSize
+            break
+        }
+    }
+
+    if ($null -eq $paraOffset) {
+        Write-Host "No PARA section found in $BmxPath"
+        return
+    }
+
+    # Parse machine names from PARA
+    $pos = [int]$paraOffset
+    $posRef = [ref]$pos
+    $numMachines = Read-DWord $bytes $posRef
+
+    Write-Host ""
+    Write-Host "Machines in: $BmxPath"
+    Write-Host ""
+
+    for ($m = 0; $m -lt $numMachines; $m++) {
+        $name = Read-AsciizString $bytes $posRef
+        $type = Read-AsciizString $bytes $posRef
+        $numGlobal = Read-DWord $bytes $posRef
+        $numTrack = Read-DWord $bytes $posRef
+        $totalParams = $numGlobal + $numTrack
+
+        # Skip parameter definitions
+        for ($p = 0; $p -lt $totalParams; $p++) {
+            $null = Read-Byte $bytes $posRef      # type
+            $null = Read-AsciizString $bytes $posRef  # name
+            $null = Read-DWord $bytes $posRef      # minValue
+            $null = Read-DWord $bytes $posRef      # maxValue
+            $null = Read-DWord $bytes $posRef      # noValue
+            $null = Read-DWord $bytes $posRef      # flags
+            $null = Read-DWord $bytes $posRef      # defValue
+        }
+
+        # Determine machine kind
+        $isHidden = ($name.Length -gt 0) -and ([byte][char]$name[0] -eq 1)
+        $kind = if ($isHidden) { "(hidden)" } else { $type }
+
+        Write-Host "  [$($m + 1)] $name  [$kind]"
+    }
+
+    Write-Host ""
+    Write-Host "Total: $numMachines machine(s)"
+    Write-Host ""
+}
+
+# Invoke-DeleteMachines: remove machines from a BMX file
+function Invoke-DeleteMachines {
+    param(
+        [string]$BmxPath,
+        [string]$OutPath,
+        [string]$Pattern,       # wildcard pattern (e.g. "SVerb*")
+        [string[]]$Names        # exact names to delete
+    )
+
+    Write-Log "Starting machine delete: $BmxPath -> $OutPath"
+
+    # Build the set of names to delete by first decoding to XML in memory
+    # Step 1: Decode to temp XML file
+    $tempXml = [System.IO.Path]::GetTempFileName()
+    $tempXml = [System.IO.Path]::ChangeExtension($tempXml, ".xml")
+    Write-Log "  Decoding to temp XML: $tempXml"
+    ConvertFrom-Buzz -BmxPath $BmxPath -XmlPath $tempXml  # decode (ConvertFrom-Buzz)
+
+    # Step 2: Load XML and find machines to delete
+    $xml = New-Object System.Xml.XmlDocument
+    $xml.Load($tempXml)
+    $root = $xml.DocumentElement
+
+    $paraEl = $root.SelectSingleNode("PARA")
+    if (-not $paraEl) { throw "No PARA section found in decoded XML" }
+
+    $allMachineNames = @()
+    foreach ($mach in @($paraEl.SelectNodes("Machine"))) {
+        $allMachineNames += $mach.GetAttribute("name")
+    }
+
+    # Build delete set from pattern and/or exact names
+    $deleteSet = @{}
+    if ($Pattern) {
+        foreach ($name in $allMachineNames) {
+            if ($name -like $Pattern) {
+                $deleteSet[$name] = $true
+            }
+        }
+        Write-Log "  Pattern '$Pattern' matched: $($deleteSet.Count) machine(s)"
+    }
+    if ($Names) {
+        foreach ($n in $Names) {
+            if ($n -in $allMachineNames) {
+                $deleteSet[$n] = $true
+            } else {
+                Write-Log "  WARNING: Machine '$n' not found in file, skipping"
+                Write-Host "WARNING: Machine '$n' not found in file, skipping"
+            }
+        }
+    }
+
+    if ($deleteSet.Count -eq 0) {
+        Write-Host "No machines matched for deletion."
+        Write-Log "No machines matched for deletion."
+        Remove-Item $tempXml -Force -ErrorAction SilentlyContinue
+        return
+    }
+
+    # Prevent deleting the Master machine (index 0)
+    if ($deleteSet.ContainsKey("Master")) {
+        Write-Host "WARNING: Cannot delete the Master machine, skipping"
+        Write-Log "  WARNING: Cannot delete the Master machine, skipping"
+        $deleteSet.Remove("Master")
+    }
+
+    # Auto-detect associated hidden pattern editor (pe) machines
+    # Pattern: if a machine is followed in PARA order by a hidden machine (name starts with 0x01),
+    # that hidden machine is its Pattern XP editor and should be deleted along with it.
+    # Note: in XML, the 0x01 byte is sanitized to "&#x01;" since it's not valid XML 1.0,
+    # and the XML parser preserves it as literal text, so we check for both forms.
+    $peCount = 0
+    for ($i = 0; $i -lt $allMachineNames.Count; $i++) {
+        $name = $allMachineNames[$i]
+        if ($deleteSet.ContainsKey($name)) {
+            # Check if the next machine(s) are hidden pe editors for this machine
+            $j = $i + 1
+            while ($j -lt $allMachineNames.Count) {
+                $nextName = $allMachineNames[$j]
+                $isHidden = $nextName.StartsWith("&#x01;") -or (($nextName.Length -gt 0) -and ([byte][char]$nextName[0] -eq 1))
+                if ($isHidden -and -not $deleteSet.ContainsKey($nextName)) {
+                    $deleteSet[$nextName] = $true
+                    $peCount++
+                    Write-Log "  Auto-including pattern editor '$nextName' (follows '$name')"
+                }
+                if (-not $isHidden) { break }  # stop at next non-hidden machine
+                $j++
+            }
+        }
+    }
+    if ($peCount -gt 0) {
+        Write-Host "Also removing $peCount associated pattern editor(s)"
+    }
+
+    Write-Host ""
+    Write-Host "Deleting $($deleteSet.Count) machine(s):"
+    foreach ($name in $deleteSet.Keys) {
+        $isHidden = ($name.Length -gt 0) -and ([byte][char]$name[0] -eq 1)
+        $label = if ($isHidden) { "$name (pattern editor)" } else { $name }
+        Write-Host "  - $label"
+    }
+    Write-Host ""
+
+    # Step 3: Remove machines from each section
+
+    # --- PARA: remove machine elements ---
+    $nodesToRemove = @()
+    foreach ($mach in @($paraEl.SelectNodes("Machine"))) {
+        if ($deleteSet.ContainsKey($mach.GetAttribute("name"))) {
+            $nodesToRemove += $mach
+        }
+    }
+    foreach ($node in $nodesToRemove) { $paraEl.RemoveChild($node) | Out-Null }
+    # Update machine count attribute if present
+    $paraEl.SetAttribute("numMachines", @($paraEl.SelectNodes("Machine")).Count)
+    Write-Log "  PARA: removed $($nodesToRemove.Count) machine(s)"
+
+    # --- MACH: remove machine elements ---
+    $machEl = $root.SelectSingleNode("MACH")
+    if ($machEl) {
+        $nodesToRemove = @()
+        foreach ($mach in @($machEl.SelectNodes("Machine"))) {
+            if ($deleteSet.ContainsKey($mach.GetAttribute("name"))) {
+                $nodesToRemove += $mach
+            }
+        }
+        foreach ($node in $nodesToRemove) { $machEl.RemoveChild($node) | Out-Null }
+        $machEl.SetAttribute("numMachines", @($machEl.SelectNodes("Machine")).Count)
+        Write-Log "  MACH: removed $($nodesToRemove.Count) machine(s)"
+    }
+
+    # --- CONN: remove connections that reference deleted machines ---
+    $connEl = $root.SelectSingleNode("CONN")
+    if ($connEl) {
+        $nodesToRemove = @()
+        foreach ($conn in @($connEl.SelectNodes("Connection"))) {
+            $src = $conn.GetAttribute("source")
+            $dst = $conn.GetAttribute("destination")
+            if ($deleteSet.ContainsKey($src) -or $deleteSet.ContainsKey($dst)) {
+                $nodesToRemove += $conn
+            }
+        }
+        foreach ($node in $nodesToRemove) { $connEl.RemoveChild($node) | Out-Null }
+        $connEl.SetAttribute("numConnections", @($connEl.SelectNodes("Connection")).Count)
+        Write-Log "  CONN: removed $($nodesToRemove.Count) connection(s)"
+    }
+
+    # --- CONX: drop entirely (contains machine indices that shift after deletion) ---
+    $conxEl = $root.SelectSingleNode("CONX")
+    if ($conxEl) {
+        $root.RemoveChild($conxEl) | Out-Null
+        Write-Log "  CONX: removed (machine indices would be invalidated)"
+    }
+
+    # --- PATT: remove MachinePatterns for deleted machines ---
+    $pattEl = $root.SelectSingleNode("PATT")
+    if ($pattEl) {
+        $nodesToRemove = @()
+        foreach ($mp in @($pattEl.SelectNodes("MachinePatterns"))) {
+            if ($deleteSet.ContainsKey($mp.GetAttribute("machine"))) {
+                $nodesToRemove += $mp
+            }
+        }
+        foreach ($node in $nodesToRemove) { $pattEl.RemoveChild($node) | Out-Null }
+        Write-Log "  PATT: removed $($nodesToRemove.Count) machine pattern set(s)"
+    }
+
+    # --- SEQU: remove sequences for deleted machines ---
+    $sequEl = $root.SelectSingleNode("SEQU")
+    if ($sequEl) {
+        $nodesToRemove = @()
+        foreach ($seq in @($sequEl.SelectNodes("Sequence"))) {
+            if ($deleteSet.ContainsKey($seq.GetAttribute("machine"))) {
+                $nodesToRemove += $seq
+            }
+        }
+        foreach ($node in $nodesToRemove) { $sequEl.RemoveChild($node) | Out-Null }
+        $remaining = @($sequEl.SelectNodes("Sequence")).Count
+        $sequEl.SetAttribute("numSequences", $remaining)
+        Write-Log "  SEQU: removed $($nodesToRemove.Count) sequence(s), $remaining remaining"
+    }
+
+    # --- MACX: remove machine elements for deleted machines ---
+    $macxEl = $root.SelectSingleNode("MACX")
+    if ($macxEl) {
+        $nodesToRemove = @()
+        foreach ($mach in @($macxEl.SelectNodes("Machine"))) {
+            if ($deleteSet.ContainsKey($mach.GetAttribute("name"))) {
+                $nodesToRemove += $mach
+            }
+        }
+        foreach ($node in $nodesToRemove) { $macxEl.RemoveChild($node) | Out-Null }
+        $macxEl.SetAttribute("numMachines", @($macxEl.SelectNodes("Machine")).Count)
+        Write-Log "  MACX: removed $($nodesToRemove.Count) machine(s)"
+    }
+
+    # --- MIDI: remove bindings for deleted machines ---
+    $midiEl = $root.SelectSingleNode("MIDI")
+    if ($midiEl) {
+        $nodesToRemove = @()
+        foreach ($bind in @($midiEl.SelectNodes("Binding"))) {
+            if ($deleteSet.ContainsKey($bind.GetAttribute("machine"))) {
+                $nodesToRemove += $bind
+            }
+        }
+        foreach ($node in $nodesToRemove) { $midiEl.RemoveChild($node) | Out-Null }
+        Write-Log "  MIDI: removed $($nodesToRemove.Count) binding(s)"
+    }
+
+    # --- PDLG: drop (contains machine indices for dialog positions) ---
+    $pdlgEl = $root.SelectSingleNode("PDLG")
+    if ($pdlgEl) {
+        $root.RemoveChild($pdlgEl) | Out-Null
+        Write-Log "  PDLG: removed (machine indices would be invalidated)"
+    }
+
+    # --- PAT2: remove MachineData for deleted machines ---
+    $pat2El = $root.SelectSingleNode("PAT2")
+    if ($pat2El -and -not $pat2El.GetAttribute("encoding")) {
+        $nodesToRemove = @()
+        foreach ($md in @($pat2El.SelectNodes("MachineData"))) {
+            if ($deleteSet.ContainsKey($md.GetAttribute("machine"))) {
+                $nodesToRemove += $md
+            }
+        }
+        foreach ($node in $nodesToRemove) { $pat2El.RemoveChild($node) | Out-Null }
+        Write-Log "  PAT2: removed $($nodesToRemove.Count) machine data set(s)"
+    } elseif ($pat2El) {
+        # Raw base64 PAT2 (unknown version) — must drop
+        $root.RemoveChild($pat2El) | Out-Null
+        Write-Log "  PAT2: removed (raw base64, cannot fix machine indices)"
+    }
+
+    # --- PATX: remove MachineEditor for deleted machines ---
+    $patxEl = $root.SelectSingleNode("PATX")
+    if ($patxEl -and -not $patxEl.GetAttribute("encoding")) {
+        $nodesToRemove = @()
+        foreach ($me in @($patxEl.SelectNodes("MachineEditor"))) {
+            if ($deleteSet.ContainsKey($me.GetAttribute("machine"))) {
+                $nodesToRemove += $me
+            }
+        }
+        foreach ($node in $nodesToRemove) { $patxEl.RemoveChild($node) | Out-Null }
+        Write-Log "  PATX: removed $($nodesToRemove.Count) machine editor assignment(s)"
+    } elseif ($patxEl) {
+        # Raw base64 PATX (unknown version) — must drop
+        $root.RemoveChild($patxEl) | Out-Null
+        Write-Log "  PATX: removed (raw base64, cannot fix machine indices)"
+    }
+
+    # (Legacy placeholder for future indexed sections)
+    foreach ($secName in @()) {
+        $secEl = $root.SelectSingleNode($secName)
+        if ($secEl) {
+            $root.RemoveChild($secEl) | Out-Null
+            Write-Log "  ${secName}: removed (machine indices would be invalidated)"
+        }
+    }
+
+    # Step 4: Save modified XML and re-encode to BMX
+    $settings = New-Object System.Xml.XmlWriterSettings
+    $settings.Indent = $true
+    $settings.IndentChars = "  "
+    $settings.Encoding = [System.Text.UTF8Encoding]::new($false)
+    $settings.CheckCharacters = $false
+
+    $writer = [System.Xml.XmlWriter]::Create($tempXml, $settings)
+    $xml.Save($writer)
+    $writer.Close()
+    Write-Log "  Saved modified XML to $tempXml"
+
+    ConvertTo-Buzz -XmlPath $tempXml -BmxPath $OutPath  # encode (ConvertTo-Buzz)
+
+    # Clean up temp file
+    Remove-Item $tempXml -Force -ErrorAction SilentlyContinue
+
+    Write-Host "Done! $($deleteSet.Count) machine(s) deleted."
+    Write-Host "Output written to: $OutPath"
+    Write-Log "Machine delete complete. Output: $OutPath"
+}
+
+# ============================================================================
 # Main entry point
 # ============================================================================
 
@@ -1705,6 +2402,16 @@ try {
                 if (-not $RemapFrom) { throw "RemapFrom is required for remap mode." }
                 if (-not $RemapTo) { throw "RemapTo is required for remap mode." }
                 Invoke-RemapPaths -BmxPath $InputFile -OutPath $OutputFile -FromPrefix $RemapFrom -ToPrefix $RemapTo
+            }
+        }
+        "machines" {
+            if ($ListMachines) {
+                # Just list machines, no output file needed
+                Show-MachineList -BmxPath $InputFile  # machine listing (Show-MachineList)
+            } else {
+                if (-not $OutputFile) { throw "OutputFile is required for machines delete mode (or use -ListMachines)." }
+                if (-not $DeletePattern -and -not $DeleteNames) { throw "DeletePattern and/or DeleteNames is required for machines delete mode." }
+                Invoke-DeleteMachines -BmxPath $InputFile -OutPath $OutputFile -Pattern $DeletePattern -Names $DeleteNames  # machine delete (Invoke-DeleteMachines)
             }
         }
     }
