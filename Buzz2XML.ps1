@@ -9,7 +9,7 @@
     embedded in machine data blobs, and list or delete machines.
 
 .PARAMETER Mode
-    "decode" (bmx -> xml), "encode" (xml -> bmx), "remap" (rewrite VST paths), or "machines" (list/delete machines).
+    "decode" (bmx -> xml), "encode" (xml -> bmx), "remap" (rewrite VST paths), "machines" (list/delete machines), or "upgrade" (upgrade SampleGrid v2 to v3).
 
 .PARAMETER InputFile
     Path to the input file (.bmx for decode/remap, .xml for encode).
@@ -46,6 +46,7 @@
     .\Buzz2XML.ps1 -Mode machines -InputFile test_buzz.bmx -ListMachines
     .\Buzz2XML.ps1 -Mode machines -InputFile test_buzz.bmx -OutputFile cleaned.bmx -DeletePattern "SVerb*"
     .\Buzz2XML.ps1 -Mode machines -InputFile test_buzz.bmx -OutputFile cleaned.bmx -DeleteNames "SVerb","SVerb2"
+    .\Buzz2XML.ps1 -Mode upgrade -InputFile mysong.bmx -OutputFile upgraded.bmx
     .\Buzz2XML.ps1 -Help
 #>
 
@@ -69,6 +70,9 @@ param(
 
     [string[]]$DeleteNames,
 
+    # decode mode: expand PATT ParamData blobs into per-row named parameter values
+    [switch]$ExpandPattData,
+
     [Alias("h")]
     [switch]$Help,
 
@@ -76,6 +80,11 @@ param(
     [Parameter(ValueFromRemainingArguments=$true)]
     $ExtraArgs
 )
+
+# ============================================================================
+# Load external modules
+# ============================================================================
+. "$PSScriptRoot\SampleGridUpgrade.ps1"  # SampleGridUpgrade.ps1
 
 # ============================================================================
 # Help display  -- Show-Help
@@ -124,6 +133,14 @@ function Show-Help {
     Write-Host "    Use -ListMachines to see all machines. Use -DeletePattern for wildcard"
     Write-Host "    matching (e.g. 'SVerb*') or -DeleteNames for exact names (as an array)."
     Write-Host "    Both can be combined. The Master machine cannot be deleted."
+    Write-Host ""
+    Write-Host "  UPGRADE SAMPLEGRID:" -ForegroundColor Green
+    Write-Host "    .\Buzz2XML.ps1 -Mode upgrade -InputFile <file.bmx> -OutputFile <out.bmx>"
+    Write-Host ""
+    Write-Host "    Upgrades BTDSys SampleGrid 2 (v2) machines to SampleGrid 3 BETA 1 (v3)."
+    Write-Host "    All 8 variants (B4/B8/B16/B32/S4/S8/S16/S32) are supported."
+    Write-Host "    Parameters, patterns, and pattern editor data are migrated automatically."
+    Write-Host "    Divider columns present in v2 are removed during migration."
     Write-Host ""
     Write-Host "PARAMETERS:" -ForegroundColor Yellow
     Write-Host ""
@@ -175,6 +192,9 @@ function Show-Help {
     Write-Host "  .\Buzz2XML.ps1 -Mode machines -InputFile mysong.bmx -OutputFile cleaned.bmx ``"
     Write-Host "      -DeleteNames `"SVerb`",`"SVerb2`",`"SVerb22`""
     Write-Host ""
+    Write-Host "  # Upgrade SampleGrid v2 machines to v3" -ForegroundColor DarkGray
+    Write-Host "  .\Buzz2XML.ps1 -Mode upgrade -InputFile mysong.bmx -OutputFile upgraded.bmx"
+    Write-Host ""
     Write-Host "NOTES:" -ForegroundColor Yellow
     Write-Host "  - A .log file is created alongside the output file for diagnostics."
     Write-Host "  - The GUI version can be launched with: .\Buzz2XML-GUI.ps1"
@@ -212,7 +232,7 @@ if (-not $Mode) {
     Write-Host "ERROR: -Mode is required. Use -Help for usage information." -ForegroundColor Red
     exit 1
 }
-$validModes = @('decode', 'encode', 'remap', 'machines')
+$validModes = @('decode', 'encode', 'remap', 'machines', 'upgrade')
 if ($Mode -notin $validModes) {
     # Could be a help flag that got mangled by the shell (e.g., /help -> C:/Program Files/Git/help)
     if ($Mode -match 'help' -or $Mode -match '^\?$' -or $Mode -match '^[A-Z]:[/\\]$') {
@@ -350,7 +370,7 @@ function Get-ParamByteSize {
 # ============================================================================
 
 function ConvertFrom-Buzz {
-    param([string]$BmxPath, [string]$XmlPath)
+    param([string]$BmxPath, [string]$XmlPath, [bool]$ExpandPattData = $false)
 
     Write-Log "Starting decode: $BmxPath -> $XmlPath"
     $bytes = [System.IO.File]::ReadAllBytes($BmxPath)
@@ -437,7 +457,7 @@ function ConvertFrom-Buzz {
             "MACX" { Parse-MACX $bytes $sec.Offset $sec.Size $xml $root }       # MACX parsing (Parse-MACX)
             "WAVT" { Parse-WAVT $bytes $sec.Offset $sec.Size $xml $root }       # WAVT parsing (Parse-WAVT)
             "WAVE" { Parse-WAVE $bytes $sec.Offset $sec.Size $xml $root }       # WAVE parsing (Parse-WAVE)
-            "PATT" { Parse-PATT $bytes $sec.Offset $sec.Size $xml $root $paraInfo $machineInputCounts }  # PATT parsing (Parse-PATT)
+            "PATT" { Parse-PATT $bytes $sec.Offset $sec.Size $xml $root $paraInfo $machineInputCounts $ExpandPattData }  # PATT parsing (Parse-PATT)
             "PAT2" { Parse-PAT2 $bytes $sec.Offset $sec.Size $xml $root $paraInfo }  # PAT2 parsing (Parse-PAT2)
             "PATX" { Parse-PATX $bytes $sec.Offset $sec.Size $xml $root $paraInfo }  # PATX parsing (Parse-PATX)
             "SEQU" { Parse-SEQU $bytes $sec.Offset $sec.Size $xml $root $paraInfo }  # SEQU parsing (Parse-SEQU)
@@ -807,9 +827,6 @@ function Parse-WAVE {
     $posRef = [ref]$pos
     $endPos = $Offset + $Size
 
-    # Detect section name from the directory
-    $secName = [System.Text.Encoding]::ASCII.GetString($Bytes, ($Offset - $Size), 4)
-    # Use generic element name
     $waveEl = $Xml.CreateElement("WAVE")
     $Parent.AppendChild($waveEl) | Out-Null
 
@@ -837,7 +854,7 @@ function Parse-WAVE {
 
 # --- PATT ---
 function Parse-PATT {
-    param([byte[]]$Bytes, [uint32]$Offset, [uint32]$Size, [System.Xml.XmlDocument]$Xml, [System.Xml.XmlElement]$Parent, [array]$ParaInfo, [hashtable]$MachineInputCounts)
+    param([byte[]]$Bytes, [uint32]$Offset, [uint32]$Size, [System.Xml.XmlDocument]$Xml, [System.Xml.XmlElement]$Parent, [array]$ParaInfo, [hashtable]$MachineInputCounts, [bool]$ExpandPattData = $false)
     $pos = [int]$Offset
     $posRef = [ref]$pos
 
@@ -907,7 +924,7 @@ function Parse-PATT {
                 }
             }
 
-            # Parameter data: rows * (globalSize + trackSize * numTracks) — stored as base64
+            # Parameter data: rows * (globalSize + trackSize * numTracks)
             $paramDataSize = $paramRowSize * $patLength
             if ($paramDataSize -gt 0) {
                 if (($pos + $paramDataSize) -gt $Bytes.Length) {
@@ -915,12 +932,133 @@ function Parse-PATT {
                     break
                 }
                 $paramData = Read-ByteArray $Bytes $posRef $paramDataSize
-                $pdEl = $Xml.CreateElement("ParamData")
-                $patEl.AppendChild($pdEl) | Out-Null
-                $pdEl.InnerText = [Convert]::ToBase64String($paramData)
+
+                if ($ExpandPattData) {
+                    # Expanded mode: decode into per-row elements with named parameter values
+                    Expand-PattParamData $Xml $patEl $paramData $pInfo $numTracks $patLength
+                } else {
+                    # Default mode: store as base64 blob
+                    $pdEl = $Xml.CreateElement("ParamData")
+                    $patEl.AppendChild($pdEl) | Out-Null
+                    $pdEl.InnerText = [Convert]::ToBase64String($paramData)
+                }
             }
         }
     }
+}
+
+# --- Expand PATT ParamData into per-row named parameter elements ---
+function Expand-PattParamData {
+    param(
+        [System.Xml.XmlDocument]$Xml,
+        [System.Xml.XmlElement]$PatEl,
+        [byte[]]$Data,
+        [PSCustomObject]$ParaInfo,
+        [int]$NumTracks,
+        [int]$NumRows
+    )
+
+    $globalParams = $ParaInfo.GlobalParams
+    $trackParams = $ParaInfo.TrackParams
+    $globalSize = $ParaInfo.GlobalSize
+    $trackSize = $ParaInfo.TrackSize
+    $rowSize = $globalSize + ($trackSize * $NumTracks)
+
+    $pdEl = $Xml.CreateElement("ParamDataExpanded")
+    $PatEl.AppendChild($pdEl) | Out-Null
+
+    for ($row = 0; $row -lt $NumRows; $row++) {
+        $rowEl = $Xml.CreateElement("Row")
+        $pdEl.AppendChild($rowEl) | Out-Null
+        $rowEl.SetAttribute("index", $row)
+
+        $rowOffset = $row * $rowSize
+
+        # Global parameters
+        $bytePos = 0
+        foreach ($gp in $globalParams) {
+            $absPos = $rowOffset + $bytePos
+            if ($gp.ByteSize -eq 2) {
+                $val = [BitConverter]::ToUInt16($Data, $absPos)
+            } else {
+                $val = [int]$Data[$absPos]
+            }
+            $rowEl.SetAttribute(("g_" + ($gp.Name -replace '\s+','_' -replace '[^a-zA-Z0-9_]','') + "_$bytePos"), $val)
+            $bytePos += $gp.ByteSize
+        }
+
+        # Track parameters
+        for ($t = 0; $t -lt $NumTracks; $t++) {
+            $trackOffset = $rowOffset + $globalSize + ($t * $trackSize)
+            $bytePos = 0
+            foreach ($tp in $trackParams) {
+                $absPos = $trackOffset + $bytePos
+                if ($tp.ByteSize -eq 2) {
+                    $val = [BitConverter]::ToUInt16($Data, $absPos)
+                } else {
+                    $val = [int]$Data[$absPos]
+                }
+                $rowEl.SetAttribute(("t${t}_" + ($tp.Name -replace '\s+','_' -replace '[^a-zA-Z0-9_]','') + "_$bytePos"), $val)
+                $bytePos += $tp.ByteSize
+            }
+        }
+    }
+}
+
+# --- Collapse expanded ParamData rows back into binary ---
+function Collapse-PattParamData {
+    param([System.Xml.XmlElement]$ExpandedEl)
+
+    $rows = @($ExpandedEl.SelectNodes("Row"))
+    if ($rows.Count -eq 0) { return [byte[]]@() }
+
+    # Collect all attribute values in row order, sorted by attribute name
+    # Attribute names encode byte position: prefix_name_bytePos
+    $allBytes = [System.Collections.Generic.List[byte]]::new()
+    foreach ($rowEl in $rows) {
+        # Get all attributes except "index", sorted by their byte position suffix
+        $attrs = @()
+        foreach ($attr in $rowEl.Attributes) {
+            if ($attr.Name -eq "index") { continue }
+            # Extract byte position from attribute name (last segment after _)
+            # Format: g_ParamName_bytePos or t0_ParamName_bytePos
+            $parts = $attr.Name -split '_'
+            $bytePos = [int]$parts[-1]
+            $prefix = $parts[0]  # g or t0, t1, etc.
+
+            # Determine sort key: globals first (prefix "g"), then tracks in order
+            if ($prefix -eq "g") {
+                $sortKey = $bytePos
+            } else {
+                # Track: extract track number and compute absolute position
+                $trackNum = [int]($prefix.Substring(1))
+                $sortKey = 100000 + ($trackNum * 1000) + $bytePos
+            }
+
+            # Determine if this is a word (2-byte) value — check if value > 255
+            $val = [int]$attr.Value
+            $isWord = ($val -gt 255) -or ($attr.Name -match '_Start_|_LoopStart_|_Loop_Start_|_End_|_LoopFit_|_Loop_Fit_|_Inertia_')
+
+            $attrs += [PSCustomObject]@{
+                SortKey = $sortKey
+                Value = $val
+                IsWord = $isWord
+            }
+        }
+
+        # Sort by sort key and emit bytes
+        $attrs = $attrs | Sort-Object SortKey
+        foreach ($a in $attrs) {
+            if ($a.IsWord) {
+                $allBytes.Add([byte]($a.Value -band 0xFF))
+                $allBytes.Add([byte](($a.Value -shr 8) -band 0xFF))
+            } else {
+                $allBytes.Add([byte]$a.Value)
+            }
+        }
+    }
+
+    return [byte[]]$allBytes.ToArray()
 }
 
 # --- SEQU ---
@@ -1669,10 +1807,15 @@ function Encode-PATT {
                 }
             }
 
-            # Parameter data blob
+            # Parameter data blob — supports both base64 (ParamData) and expanded (ParamDataExpanded)
             $paramDataEl = $pat.SelectSingleNode("ParamData")
+            $paramDataExpandedEl = $pat.SelectSingleNode("ParamDataExpanded")
             if ($paramDataEl) {
                 $paramBytes = [Convert]::FromBase64String($paramDataEl.InnerText)
+                $bw.Write($paramBytes)
+            } elseif ($paramDataExpandedEl) {
+                # Re-pack expanded rows back into binary
+                $paramBytes = Collapse-PattParamData $paramDataExpandedEl
                 $bw.Write($paramBytes)
             }
         }
@@ -2387,7 +2530,7 @@ try {
     switch ($Mode) {
         "decode" {
             if (-not $OutputFile) { throw "OutputFile is required for decode mode." }
-            ConvertFrom-Buzz -BmxPath $InputFile -XmlPath $OutputFile
+            ConvertFrom-Buzz -BmxPath $InputFile -XmlPath $OutputFile -ExpandPattData $ExpandPattData.IsPresent
         }
         "encode" {
             if (-not $OutputFile) { throw "OutputFile is required for encode mode." }
@@ -2413,6 +2556,10 @@ try {
                 if (-not $DeletePattern -and -not $DeleteNames) { throw "DeletePattern and/or DeleteNames is required for machines delete mode." }
                 Invoke-DeleteMachines -BmxPath $InputFile -OutPath $OutputFile -Pattern $DeletePattern -Names $DeleteNames  # machine delete (Invoke-DeleteMachines)
             }
+        }
+        "upgrade" {
+            if (-not $OutputFile) { throw "OutputFile is required for upgrade mode." }
+            Invoke-UpgradeSampleGrid -BmxPath $InputFile -OutPath $OutputFile  # SampleGrid upgrade (Invoke-UpgradeSampleGrid in SampleGridUpgrade.ps1)
         }
     }
 } catch {

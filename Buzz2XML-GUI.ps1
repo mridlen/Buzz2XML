@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    GUI frontend for Buzz2XML - Jeskola Buzz file converter, VST path remapper, and machine manager.
+    GUI frontend for Buzz2XML - Jeskola Buzz file converter, VST path remapper, machine manager, and SampleGrid upgrader.
 .DESCRIPTION
     Launches a Windows Forms GUI that wraps the Buzz2XML.ps1 command-line tool.
-    Provides tabs for Decode, Encode, Remap, and Machines operations with file browse dialogs.
+    Provides tabs for Decode, Encode, Remap, Machines, and SampleGrid Upgrade operations with file browse dialogs.
 #>
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -95,8 +95,12 @@ function Invoke-CliCommand {
         $result = $result -replace "`n", "`r`n"
 
         $OutputBox.Text = $result
+        $OutputBox.SelectionStart = $OutputBox.Text.Length
+        $OutputBox.ScrollToCaret()
     } catch {
         $OutputBox.Text = "ERROR: $_"
+        $OutputBox.SelectionStart = $OutputBox.Text.Length
+        $OutputBox.ScrollToCaret()
     }
 }
 
@@ -608,6 +612,109 @@ $btnDelete.Add_Click({
     }
 
     Invoke-CliCommand -Arguments $cliArgs -OutputBox $txtMachLog
+})
+
+# ============================================================================
+# Tab 5: SampleGrid Upgrade
+# ============================================================================
+
+$tabUpgrade = New-Object System.Windows.Forms.TabPage
+$tabUpgrade.Text = "SampleGrid Upgrade"
+$tabControl.TabPages.Add($tabUpgrade)
+
+# Input file row
+$lblUpgIn = New-Object System.Windows.Forms.Label
+$lblUpgIn.Text = "Input BMX File:"
+$lblUpgIn.Location = New-Object System.Drawing.Point(15, 20)
+$lblUpgIn.AutoSize = $true
+$tabUpgrade.Controls.Add($lblUpgIn)
+
+$txtUpgIn = New-Object System.Windows.Forms.TextBox
+$txtUpgIn.Location = New-Object System.Drawing.Point(15, 40)
+$txtUpgIn.Size = New-Object System.Drawing.Size(530, 23)
+$tabUpgrade.Controls.Add($txtUpgIn)
+
+$btnUpgIn = New-Object System.Windows.Forms.Button
+$btnUpgIn.Text = "Browse..."
+$btnUpgIn.Location = New-Object System.Drawing.Point(555, 38)
+$btnUpgIn.Size = New-Object System.Drawing.Size(85, 27)
+$btnUpgIn.Add_Click({
+    $file = Show-FileDialog -Title "Select Buzz BMX File" -Filter "Buzz Files (*.bmx)|*.bmx|All Files (*.*)|*.*"
+    if ($file) {
+        $txtUpgIn.Text = $file
+        # Auto-fill output with _upgraded suffix
+        $dir = [System.IO.Path]::GetDirectoryName($file)
+        $name = [System.IO.Path]::GetFileNameWithoutExtension($file)
+        $ext = [System.IO.Path]::GetExtension($file)
+        $txtUpgOut.Text = Join-Path $dir "${name}_upgraded${ext}"
+    }
+})
+$tabUpgrade.Controls.Add($btnUpgIn)
+
+# Output file row
+$lblUpgOut = New-Object System.Windows.Forms.Label
+$lblUpgOut.Text = "Output BMX File:"
+$lblUpgOut.Location = New-Object System.Drawing.Point(15, 75)
+$lblUpgOut.AutoSize = $true
+$tabUpgrade.Controls.Add($lblUpgOut)
+
+$txtUpgOut = New-Object System.Windows.Forms.TextBox
+$txtUpgOut.Location = New-Object System.Drawing.Point(15, 95)
+$txtUpgOut.Size = New-Object System.Drawing.Size(530, 23)
+$tabUpgrade.Controls.Add($txtUpgOut)
+
+$btnUpgOut = New-Object System.Windows.Forms.Button
+$btnUpgOut.Text = "Browse..."
+$btnUpgOut.Location = New-Object System.Drawing.Point(555, 93)
+$btnUpgOut.Size = New-Object System.Drawing.Size(85, 27)
+$btnUpgOut.Add_Click({
+    $file = Show-FileDialog -Title "Save Upgraded BMX File As" -Filter "Buzz Files (*.bmx)|*.bmx|All Files (*.*)|*.*" -Save $true
+    if ($file) { $txtUpgOut.Text = $file }
+})
+$tabUpgrade.Controls.Add($btnUpgOut)
+
+# Info label
+$lblUpgInfo = New-Object System.Windows.Forms.Label
+$lblUpgInfo.Text = "Upgrades BTDSys SampleGrid 2 (v2) machines to SampleGrid 3 BETA 1 (v3).`nAll 8 variants (B4/B8/B16/B32/S4/S8/S16/S32) are supported."
+$lblUpgInfo.Location = New-Object System.Drawing.Point(15, 130)
+$lblUpgInfo.Size = New-Object System.Drawing.Size(625, 35)
+$lblUpgInfo.ForeColor = [System.Drawing.Color]::FromArgb(100, 100, 100)
+$tabUpgrade.Controls.Add($lblUpgInfo)
+
+# Upgrade button
+$btnUpgrade = New-Object System.Windows.Forms.Button
+$btnUpgrade.Text = "Upgrade SampleGrid"
+$btnUpgrade.Location = New-Object System.Drawing.Point(15, 170)
+$btnUpgrade.Size = New-Object System.Drawing.Size(200, 35)
+$btnUpgrade.BackColor = [System.Drawing.Color]::FromArgb(50, 140, 160)
+$btnUpgrade.ForeColor = [System.Drawing.Color]::White
+$btnUpgrade.FlatStyle = "Flat"
+$tabUpgrade.Controls.Add($btnUpgrade)
+
+# Output log area
+$txtUpgLog = New-Object System.Windows.Forms.TextBox
+$txtUpgLog.Location = New-Object System.Drawing.Point(15, 220)
+$txtUpgLog.Size = New-Object System.Drawing.Size(625, 260)
+$txtUpgLog.Multiline = $true
+$txtUpgLog.ScrollBars = "Both"
+$txtUpgLog.WordWrap = $false
+$txtUpgLog.ReadOnly = $true
+$txtUpgLog.Font = New-Object System.Drawing.Font("Consolas", 9)
+$txtUpgLog.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 30)
+$txtUpgLog.ForeColor = [System.Drawing.Color]::FromArgb(200, 220, 200)
+$tabUpgrade.Controls.Add($txtUpgLog)
+
+$btnUpgrade.Add_Click({
+    if (-not $txtUpgIn.Text) {
+        [System.Windows.Forms.MessageBox]::Show("Please select an input BMX file.", "Missing Input", "OK", "Warning")
+        return
+    }
+    if (-not $txtUpgOut.Text) {
+        [System.Windows.Forms.MessageBox]::Show("Please specify an output BMX file.", "Missing Output", "OK", "Warning")
+        return
+    }
+    $cliArgs = "-Mode upgrade -InputFile `"$($txtUpgIn.Text)`" -OutputFile `"$($txtUpgOut.Text)`""
+    Invoke-CliCommand -Arguments $cliArgs -OutputBox $txtUpgLog
 })
 
 # ============================================================================
