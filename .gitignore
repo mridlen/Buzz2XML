@@ -5,6 +5,7 @@
 !Buzz2XML.ps1
 !Buzz2XML-GUI.ps1
 !SampleGridUpgrade.ps1
+!sgrid_v3_tail.b64
 
 # Allow git and project files
 !.gitignore
